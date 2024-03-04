@@ -37,6 +37,8 @@
 #define USE_ORIG_FUNC(n) (use_std_lib_calls == 1 || n < dsa_min_size)
 #define TS_NS(s, e) (((e.tv_sec*1000000000) + e.tv_nsec) - ((s.tv_sec*1000000000) + s.tv_nsec))
 
+#define SHORT_TIMEOUT 50  // Microseconds (adjust to about 2.5x the typical DSA operation time)
+
 /* Maximum WQs that DTO will use. It is rather an arbitrary limit
  * to keep things simple and avoid having to dynamically allocate memory.
  * Allocating memory dynamically may create cyclic dependency and may cause
@@ -334,11 +336,31 @@ static __always_inline void __dsa_wait_umwait(const volatile uint8_t *comp)
 	}
 }
 
-static __always_inline void dsa_wait_umwait(const volatile uint8_t *comp)
+static __always_inline void dsa_wait_umwait(const volatile uint8_t* comp)
 {
+	// This assumes DSA sets *comp to 1 when finished
+	uint32_t expected_value = 0;
 
-	while (*comp == 0)
-		__dsa_wait_umwait(comp);
+	__umwait_with_timeout(&expected_value, comp, 1, SHORT_TIMEOUT);
+
+	// SHORT_TIMEOUT is a small value (e.g., microseconds) chosen based on expected DSA latency
+}
+
+int __umwait_with_timeout(uint32_t* expected_value, const volatile void* addr,
+	uint32_t hint, unsigned long timeout_us) {
+
+	// Using inline assembly for UMWAIT and UMONITOR
+	__asm__ volatile ("1: umwait %%rax, %%rcx\n\t"  // UMWAIT
+		"jc 2f\n\t"                  // Jump if carry flag is set (timeout)
+		"umonitor %%rax\n\t"         // UMONITOR for the address
+		"setz %%al\n\t"              // Set zero flag if wait successful
+		"2:"
+		: "=a"(timeout_us)         // Output: Updated timeout  
+		: "a"(*expected_value), "c"(addr), "d"(hint), "D"(timeout_us)  // Inputs
+		: "cc");                    // Clobbered registers (condition codes)
+
+	// Return 0 for success (zero flag set), non-zero for error/timeout
+	return timeout_us;
 }
 
 static __always_inline void __dsa_wait(const volatile uint8_t *comp)
