@@ -323,31 +323,17 @@ static __always_inline void dsa_wait_busy_poll(const volatile uint8_t *comp)
 		_mm_pause();
 }
 
-static __always_inline void __dsa_wait_umwait(const volatile uint8_t *comp)
+static __always_inline void __dsa_wait_umwait(const volatile uint8_t* comp)
 {
-	umonitor(comp);
-
-	// Hardware never writes 0 to this field. Software should initialize this field to 0
-	// so it can detect when the completion record has been written
-	if (*comp == 0) {
-		uint64_t delay = __rdtsc() + UMWAIT_DELAY;
-
-		umwait(delay, UMWAIT_STATE);
-	}
-}
-
-static __always_inline void dsa_wait_umwait(const volatile uint8_t* comp)
-{
-	// This assumes DSA sets *comp to 1 when finished
+	// We assume that DSA sets *comp to 1 when finished
 	uint32_t expected_value = 0;
 
 	__umwait_with_timeout(&expected_value, comp, 1, SHORT_TIMEOUT);
 
-	// SHORT_TIMEOUT is a small value (e.g., microseconds) chosen based on expected DSA latency
+	// SHORT_TIMEOUT is a small time value in microseconds chosen based on expected DSA latency
 }
 
-int __umwait_with_timeout(uint32_t* expected_value, const volatile void* addr,
-	uint32_t hint, unsigned long timeout_us) {
+int __umwait_with_timeout(uint32_t* expected_value, const volatile void* addr, uint32_t hint, unsigned long timeout_us) {
 
 	// Using inline assembly for UMWAIT and UMONITOR
 	__asm__ volatile ("1: umwait %%rax, %%rcx\n\t"  // UMWAIT
